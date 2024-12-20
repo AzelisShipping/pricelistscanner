@@ -25,7 +25,7 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-4', // or 'gpt-3.5-turbo' if you don't have access to GPT-4
+        model: 'gpt-3.5-turbo', // or 'gpt-3.5-turbo' if you don't have access to GPT-4
         messages: [
           { role: 'system', content: 'You return only JSON of matched codes and decisions.' },
           { role: 'user', content: prompt }
