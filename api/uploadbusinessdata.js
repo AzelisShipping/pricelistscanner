@@ -9,16 +9,16 @@ const fs = require('fs');
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
-      "type": process.env.FIREBASE_TYPE,
-      "project_id": process.env.FIREBASE_PROJECT_ID,
-      "private_key_id": process.env.FIREBASE_PRIVATE_KEY_ID,
-      "private_key": process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      "client_email": process.env.FIREBASE_CLIENT_EMAIL,
-      "client_id": process.env.FIREBASE_CLIENT_ID,
-      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-      "token_uri": "https://oauth2.googleapis.com/token",
-      "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-      "client_x509_cert_url": process.env.FIREBASE_CLIENT_CERT_URL
+      type: process.env.FIREBASE_TYPE,
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL
     }),
     databaseURL: "https://pricelistscanner.firebaseio.com"
   });
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*'); // Adjust as needed
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
@@ -45,23 +45,6 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  // Verify Firebase ID token
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: No token provided' });
-  }
-
-  const idToken = authHeader.split('Bearer ')[1];
-
-  let decodedToken;
-  try {
-    decodedToken = await admin.auth().verifyIdToken(idToken);
-    console.log("Authenticated user:", decodedToken.uid);
-  } catch (error) {
-    console.error("Error verifying ID token:", error);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
 
   // Parse the incoming form with formidable
@@ -130,7 +113,7 @@ export default async function handler(req, res) {
           packWeight: parseFloat(packWeight),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          uploadedBy: decodedToken.uid // Track who uploaded the data
+          // uploadedBy field can be removed or set to a default value if not tracking users
         }, { merge: true });
       });
 
@@ -149,4 +132,3 @@ export default async function handler(req, res) {
     }
   });
 }
-
