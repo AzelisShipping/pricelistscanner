@@ -1,33 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
   <title>Price List Scanner</title>
+  <!-- Include necessary scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 </head>
 <body>
   <h1>Price List Scanner</h1>
-  
-  <!-- File input for Excel/PDF -->
-  <input type="file" id="fileInput" multiple>
 
-  <!-- Button to trigger processing -->
-  <button id="processBtn">Process Files</button>
+  <!-- Existing File Upload Section -->
+  <div>
+    <h2>Process Files</h2>
+    <input type="file" id="fileInput" multiple>
+    <button id="processBtn">Process Files</button>
+    <p id="status"></p>
+  </div>
 
-  <!-- Status output -->
-  <p id="status"></p>
+  <hr>
 
-  <!-- Firebase SDKs (v8) -->
-  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+  <!-- New Bulk Upload Section -->
+  <div>
+    <h2>Bulk Upload Business Data</h2>
+    <input type="file" id="bulkUploadInput" accept=".xlsx, .xls">
+    <button id="bulkUploadBtn">Upload Business Data</button>
+    <p id="bulkStatus"></p>
+  </div>
 
-  <!-- SheetJS for Excel parsing/generating -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-
-  <!-- PDF.js for PDF text extraction -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
-
-  <!-- Your main script -->
+  <!-- Include your script.js -->
   <script src="script.js"></script>
 </body>
 </html>
