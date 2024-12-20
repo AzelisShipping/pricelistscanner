@@ -1,6 +1,6 @@
 export const config = {
   api: {
-    bodyParser: true, // Ensures the request body is parsed if needed
+    bodyParser: true, // Ensures the request body is parsed
   },
 };
 
@@ -44,7 +44,7 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo', // Use a known valid model
+        model: 'gpt-3.5-turbo', // Correct model name
         messages: [
           { role: 'system', content: 'You return only JSON of matched codes and decisions.' },
           { role: 'user', content: prompt }
@@ -58,6 +58,12 @@ export default async function handler(req, res) {
     if (!openaiRes.ok) {
       const errorText = await openaiRes.text();
       console.error("OpenAI API error:", errorText);
+
+      // Handle specific OpenAI error codes
+      if (openaiRes.status === 429) {
+        return res.status(429).json({ error: "OpenAI API quota exceeded. Please try again later." });
+      }
+
       return res.status(openaiRes.status).json({ error: "OpenAI API error", details: errorText });
     }
 
@@ -77,12 +83,12 @@ export default async function handler(req, res) {
       processedData = JSON.parse(answer);
     } catch (e) {
       console.error("Invalid JSON returned by the model:", answer);
-      processedData = [{error: "Invalid JSON returned by the model"}];
+      processedData = [{ error: "Invalid JSON returned by the model" }];
     }
 
     res.status(200).json(processedData);
   } catch (error) {
     console.error("Server error:", error);
-    res.status(500).json({error: 'Something went wrong'});
+    res.status(500).json({ error: 'Something went wrong' });
   }
 }
