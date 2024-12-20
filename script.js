@@ -1,7 +1,6 @@
-// Project information (not required for functionality, just for reference):
+// Project information (for reference only):
 // Project name: pricelistscanner
 // Project ID: pricelistscanner
-// Project number: 925350073765
 // App nickname: pricelistmatchapp
 // App ID: 1:925350073765:web:4c6f0d1c0471df1df0c44c
 
@@ -15,7 +14,7 @@ const firebaseConfig = {
   appId: "1:925350073765:web:4c6f0d1c0471df1df0c44c"
 };
 
-// Initialize Firebase
+// Initialize Firebase (using v8 SDK)
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
@@ -102,7 +101,7 @@ async function extractPDFText(file) {
 }
 
 async function callFunctionForOpenAI(text, referenceData) {
-  // Updated URL to your Vercel function endpoint
+  // Replace this with your actual Vercel function URL
   const url = "https://pricelistscanner.vercel.app/api/openai";
 
   const response = await fetch(url, {
