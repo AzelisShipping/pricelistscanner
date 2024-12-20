@@ -1,4 +1,14 @@
 export default async function handler(req, res) {
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   const { text, referenceData } = req.body;
 
   const prompt = `
@@ -15,7 +25,7 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-4', // or 'gpt-3.5-turbo' if you don't have GPT-4 access
+        model: 'gpt-4', // or 'gpt-3.5-turbo' if you don't have access to GPT-4
         messages: [
           { role: 'system', content: 'You return only JSON of matched codes and decisions.' },
           { role: 'user', content: prompt }
@@ -40,4 +50,3 @@ export default async function handler(req, res) {
     res.status(500).json({error: 'Something went wrong'});
   }
 }
-
