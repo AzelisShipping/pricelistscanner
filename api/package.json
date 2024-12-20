@@ -4,6 +4,7 @@
   "dependencies": {
     "firebase-admin": "^11.0.0",
     "formidable": "^2.0.1",
+    "node-fetch": "^2.6.7",
     "xlsx": "^0.18.5"
   }
 }
