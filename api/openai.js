@@ -1,56 +1,83 @@
+// api/openai.js
+
+const admin = require('firebase-admin');
+const fetch = require('node-fetch');
+
+// Initialize Firebase Admin SDK
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      type: process.env.FIREBASE_TYPE,
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL
+    }),
+    databaseURL: "https://pricelistscanner.firebaseio.com"
+  });
+}
+
+const db = admin.firestore();
+
 export const config = {
   api: {
-    bodyParser: true, // Ensures the request body is parsed
+    bodyParser: true, // Enable body parsing
   },
 };
 
 export default async function handler(req, res) {
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
-    console.log("OPTIONS request received, returning 200.");
     return res.status(200).end();
   }
 
-  // Debugging logs
-  console.log("Request method:", req.method);
-  console.log("Request headers:", req.headers);
-  console.log("Request body:", req.body);
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-  // Attempt to destructure the body
-  const { text, referenceData } = req.body || {};
+  const { text, referenceData } = req.body;
 
-  // If body or required fields are missing, return an error early
   if (!text || !referenceData) {
-    console.error("Missing 'text' or 'referenceData' in request body.");
-    return res.status(400).json({ error: "Missing text or referenceData in request body." });
+    return res.status(400).json({ error: 'Missing text or referenceData in request body.' });
   }
 
   const prompt = `
 You are a data processing assistant.
 
-Given the following text and reference data, identify matched codes and their decisions.
+Given the following text and reference data, identify **all** matched product SKUs and provide their details.
 
-Text:
+**Text:**
 ${text}
 
-Reference Data:
+**Reference Data:**
 ${JSON.stringify(referenceData)}
 
-Please respond only with a JSON array of objects, each containing the matched code and its decision, in the following format:
+**Instructions:**
+1. Identify all instances where a product SKU from the reference data appears in the text.
+2. For each matched SKU, return an object containing the "sku", "description", and "weight".
+3. Ensure that the response is a valid JSON array without any additional text or explanations.
 
+**Expected Format:**
 [
   {
-    "code": "ABC123",
-    "decision": "Approved"
+    "sku": "ABC123",
+    "description": "High-quality widget for industrial use.",
+    "weight": 2.5
   },
   {
-    "code": "XYZ789",
-    "decision": "Rejected"
+    "sku": "XYZ789",
+    "description": "Compact gadget for everyday tasks.",
+    "weight": 0.75
   }
 ]
 `;
@@ -63,7 +90,7 @@ Please respond only with a JSON array of objects, each containing the matched co
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo', // Correct model name
+        model: 'gpt-3.5-turbo', // or 'gpt-4' if you have access
         messages: [
           { role: 'system', content: 'You are a helpful assistant that provides only JSON data as instructed.' },
           { role: 'user', content: prompt }
@@ -72,8 +99,6 @@ Please respond only with a JSON array of objects, each containing the matched co
       })
     });
 
-    console.log("OpenAI response status:", openaiRes.status);
-
     if (!openaiRes.ok) {
       const errorText = await openaiRes.text();
       console.error("OpenAI API error:", errorText);
@@ -81,9 +106,7 @@ Please respond only with a JSON array of objects, each containing the matched co
     }
 
     const data = await openaiRes.json();
-    console.log("OpenAI response data:", data);
 
-    // Ensure the response structure is as expected
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
       console.error("Unexpected OpenAI response format.", data);
       return res.status(500).json({ error: "Unexpected OpenAI response format" });
@@ -91,14 +114,14 @@ Please respond only with a JSON array of objects, each containing the matched co
 
     const answer = data.choices[0].message.content.trim();
 
-    console.log("Raw answer from OpenAI:", answer);
-
     let processedData;
     try {
       processedData = JSON.parse(answer);
+      if (!Array.isArray(processedData)) {
+        throw new Error("Response is not an array");
+      }
     } catch (e) {
       console.error("Invalid JSON returned by the model:", answer);
-      // Optionally, return the raw answer for further debugging
       return res.status(500).json({ error: "Invalid JSON returned by the model", raw: answer });
     }
 
