@@ -1,11 +1,11 @@
-// Project information (not required for functionality, just documentation):
+// Project information (not required for functionality, just for reference):
 // Project name: pricelistscanner
 // Project ID: pricelistscanner
 // Project number: 925350073765
 // App nickname: pricelistmatchapp
 // App ID: 1:925350073765:web:4c6f0d1c0471df1df0c44c
 
-// Firebase web app configuration (from the snippet you provided):
+// Firebase web app configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDX89iKbSulLbxz3qPxLlcuKCMF-qqptwA",
   authDomain: "pricelistscanner.firebaseapp.com",
@@ -102,9 +102,8 @@ async function extractPDFText(file) {
 }
 
 async function callFunctionForOpenAI(text, referenceData) {
-  // Replace this with the actual URL of your deployed Cloud Function.
-  // Example: "https://us-central1-pricelistscanner.cloudfunctions.net/openaiHandler"
-  const url = "YOUR_CLOUD_FUNCTION_URL";
+  // Updated URL to your Vercel function endpoint
+  const url = "https://pricelistscanner.vercel.app/api/openai";
 
   const response = await fetch(url, {
     method: 'POST',
