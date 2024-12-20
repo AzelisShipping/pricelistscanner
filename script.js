@@ -13,7 +13,6 @@ const firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const auth = firebase.auth();
 
 // Get references to DOM elements
 const fileInput = document.getElementById('fileInput');
@@ -23,12 +22,6 @@ const processBtn = document.getElementById('processBtn');
 const bulkUploadInput = document.getElementById('bulkUploadInput');
 const bulkUploadBtn = document.getElementById('bulkUploadBtn');
 const bulkStatusEl = document.getElementById('bulkStatus');
-
-// Handle user authentication (Anonymous for simplicity)
-auth.signInAnonymously().catch(error => {
-  console.error("Authentication error:", error);
-  alert("Failed to authenticate. Please try again.");
-});
 
 // Handle file selection for processing
 fileInput.addEventListener('change', (e) => {
@@ -91,18 +84,8 @@ bulkUploadBtn.addEventListener('click', async () => {
     const formData = new FormData();
     formData.append('file', bulkFile);
 
-    // Get the current user's ID token for authentication
-    const user = auth.currentUser;
-    if (!user) {
-      throw new Error('User not authenticated');
-    }
-    const idToken = await user.getIdToken();
-
     const response = await fetch('https://pricelistscanner.vercel.app/api/uploadBusinessData', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${idToken}`
-      },
       body: formData
     });
 
@@ -125,7 +108,7 @@ async function loadReferenceData() {
   return snapshot.docs.map(doc => ({
     sku: doc.data().sku.trim().toUpperCase(),
     description: doc.data().description.trim(),
-    weight: doc.data().weight,
+    weight: doc.data().packWeight, // Ensure the field name matches your Firestore schema
     // Include other fields if needed
   }));
 }
