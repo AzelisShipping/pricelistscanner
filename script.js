@@ -6,7 +6,7 @@ const firebaseConfig = {
   authDomain: "pricelistscanner.firebaseapp.com",
   projectId: "pricelistscanner",
   storageBucket: "pricelistscanner.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  messagingSenderId: "925350073765",
   appId: "1:925350073765:web:4c6f0d1c0471df1df0c44c"
 };
 
