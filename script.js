@@ -101,16 +101,19 @@ async function extractPDFText(file) {
 }
 
 async function callFunctionForOpenAI(text, referenceData) {
-  // Replace this with your actual Vercel function URL
   const url = "https://pricelistscanner.vercel.app/api/openai";
-
+  
   const response = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ text, referenceData })
+    method: 'POST', // Ensure POST is used
+    headers: {
+      'Content-Type': 'application/json' // Ensure JSON headers are set
+    },
+    body: JSON.stringify({ text, referenceData }) // Ensure body is stringified JSON
   });
+
   return response.json();
 }
+
 
 function downloadExcel(data) {
   const wb = XLSX.utils.book_new();
