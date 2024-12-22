@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Product Code Uploader</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div>
+        <h2>Upload Product Codes</h2>
+        <input type="file" id="fileInput" accept=".xlsx, .xls">
+        <button onclick="uploadFile()">Upload to Database</button>
+        <p id="status"></p>
+        <div id="progress"></div>
+    </div>
+
+    <script>
+        // Initialize Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyDX89iKbSulLbxz3qPxLlcuKCMF-qqptwA",
+            authDomain: "pricelistscanner.firebaseapp.com",
+            projectId: "pricelistscanner",
+            storageBucket: "pricelistscanner.appspot.com",
+            messagingSenderId: "925350073765",
+            appId: "1:925350073765:web:4c6f0d1c0471df1df0c44c"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const statusEl = document.getElementById('status');
+            const progressEl = document.getElementById('progress');
+            
+            if (!fileInput.files.length) {
+                alert('Please select a file first.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            statusEl.textContent = 'Reading file...';
+
+            try {
+                // Read the Excel file
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    try {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+                        statusEl.textContent = `Processing ${jsonData.length} records...`;
+                        let successful = 0;
+                        let failed = 0;
+
+                        // Process in smaller batches to avoid timeout
+                        const batchSize = 100;
+                        for (let i = 0; i < jsonData.length; i += batchSize) {
+                            const batch = db.batch();
+                            const currentBatch = jsonData.slice(i, i + batchSize);
+
+                            currentBatch.forEach(row => {
+                                if (!row['Product Number']) {
+                                    failed++;
+                                    return;
+                                }
+
+                                const docRef = db.collection('products').doc(row['Product Number'].toString().trim());
+                                batch.set(docRef, {
+                                    accountSelection: (row['Account Selection'] || '').toString().trim(),
+                                    sku: row['Product Number'].toString().trim(),
+                                    description: (row['Product Description'] || '').toString().trim(),
+                                    searchDescription: (row['Search Description'] || '').toString().trim(),
+                                    packWeight: typeof row['Pack Weight'] === 'number' ? 
+                                        row['Pack Weight'] : 
+                                        parseFloat(row['Pack Weight']) || 0,
+                                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                                }, { merge: true });
+
+                                successful++;
+                            });
+
+                            await batch.commit();
+                            progressEl.textContent = `Progress: ${Math.min((i + batchSize), jsonData.length)}/${jsonData.length}`;
+                        }
+
+                        statusEl.textContent = `Upload complete! Successfully uploaded ${successful} records. ${failed} records skipped.`;
+                    } catch (error) {
+                        console.error('Error processing file:', error);
+                        statusEl.textContent = 'Error: ' + error.message;
+                    }
+                };
+
+                reader.readAsArrayBuffer(file);
+
+            } catch (error) {
+                console.error('Error reading file:', error);
+                statusEl.textContent = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
