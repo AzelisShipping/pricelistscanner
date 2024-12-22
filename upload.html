@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Super Slow Product Code Uploader</title>
+    <title>Ultra Conservative Product Code Uploader</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -12,48 +12,55 @@
         .error { background: #ffe6e6; color: #cc0000; }
         .success { background: #e6ffe6; color: #006600; }
         .warning { background: #fff3e6; color: #cc6600; }
-        .progress-bar { 
-            width: 100%;
-            height: 20px;
-            background: #f0f0f0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 10px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background: #4CAF50;
-            transition: width 0.3s ease;
-        }
-        button { 
-            padding: 10px 20px;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        button:disabled {
-            background: #cccccc;
-        }
-        .controls { margin: 20px 0; }
+        .progress-bar { width: 100%; height: 20px; background: #f0f0f0; border-radius: 10px; overflow: hidden; margin: 10px 0; }
+        .progress-fill { height: 100%; background: #4CAF50; transition: width 0.3s ease; }
+        button { padding: 10px 20px; margin: 5px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:disabled { background: #cccccc; }
+        .settings { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; }
+        input[type="number"] { width: 100px; padding: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Product Code Uploader</h1>
+        <h1>Ultra Conservative Product Code Uploader</h1>
+        
+        <div class="settings">
+            <h3>Upload Settings</h3>
+            <div>
+                <label>Start from row: </label>
+                <input type="number" id="startRow" value="0" min="0">
+            </div>
+            <div>
+                <label>End at row: </label>
+                <input type="number" id="endRow" value="1000" min="1">
+            </div>
+            <div>
+                <label>Items per batch: </label>
+                <input type="number" id="batchSize" value="5" min="1" max="10">
+            </div>
+            <div>
+                <label>Delay between items (ms): </label>
+                <input type="number" id="itemDelay" value="1000" min="500" step="500">
+            </div>
+            <div>
+                <label>Delay between batches (ms): </label>
+                <input type="number" id="batchDelay" value="5000" min="1000" step="1000">
+            </div>
+        </div>
+
         <div class="controls">
             <input type="file" id="fileInput" accept=".xlsx, .xls">
             <button onclick="startUpload()">Start Upload</button>
             <button id="pauseButton" onclick="togglePause()" disabled>Pause</button>
         </div>
         
-        <div id="progressBar" class="progress-bar">
+        <div class="progress-bar">
             <div id="progressFill" class="progress-fill" style="width: 0%"></div>
         </div>
         
         <p id="status" class="status"></p>
         <p id="details"></p>
+        <p id="retryInfo"></p>
     </div>
 
     <script>
@@ -71,13 +78,21 @@
         const db = firebase.firestore();
 
         let isPaused = false;
-        let globalWorkbook = null;
-        let currentRow = 0;
-        let totalRows = 0;
         let jsonData = null;
-        const ITEMS_PER_BATCH = 10;  // Reduced batch size
-        const DELAY_BETWEEN_BATCHES = 3000;  // 3 seconds delay
-        const DELAY_BETWEEN_ITEMS = 300;     // 300ms delay between individual items
+        let currentRow = 0;
+        let retryCount = 0;
+        const MAX_RETRIES = 5;
+        const INITIAL_RETRY_DELAY = 10000; // 10 seconds
+
+        function getSettings() {
+            return {
+                startRow: parseInt(document.getElementById('startRow').value) || 0,
+                endRow: parseInt(document.getElementById('endRow').value) || 1000,
+                batchSize: parseInt(document.getElementById('batchSize').value) || 5,
+                itemDelay: parseInt(document.getElementById('itemDelay').value) || 1000,
+                batchDelay: parseInt(document.getElementById('batchDelay').value) || 5000
+            };
+        }
 
         function updateProgress(current, total) {
             const percentage = (current / total) * 100;
@@ -92,7 +107,11 @@
             statusEl.className = 'status ' + type;
         }
 
-        async function processItem(row) {
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function processItemWithRetry(row, retryCount = 0) {
             if (!row['Product Number']) {
                 return { skipped: true };
             }
@@ -112,79 +131,95 @@
                 return { success: true };
             } catch (error) {
                 console.error('Error processing item:', error);
+                
+                if (error.code === 'resource-exhausted' && retryCount < MAX_RETRIES) {
+                    const retryDelay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount);
+                    document.getElementById('retryInfo').textContent = 
+                        `Rate limit hit. Waiting ${retryDelay/1000} seconds before retry ${retryCount + 1}/${MAX_RETRIES}`;
+                    await sleep(retryDelay);
+                    return processItemWithRetry(row, retryCount + 1);
+                }
+                
                 return { error: error.message };
             }
         }
 
-        async function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        async function processBatch(startIndex) {
+        async function processBatch(startIndex, settings) {
             let successful = 0;
             let skipped = 0;
             let failed = 0;
 
-            for (let i = startIndex; i < Math.min(startIndex + ITEMS_PER_BATCH, jsonData.length); i++) {
+            const endIndex = Math.min(startIndex + settings.batchSize, settings.endRow);
+            
+            for (let i = startIndex; i < endIndex; i++) {
                 if (isPaused) {
                     throw new Error('PAUSED');
                 }
 
-                const result = await processItem(jsonData[i]);
+                if (i >= jsonData.length) break;
+
+                const result = await processItemWithRetry(jsonData[i]);
                 if (result.success) successful++;
                 else if (result.skipped) skipped++;
                 else failed++;
 
                 currentRow = i + 1;
-                updateProgress(currentRow, totalRows);
+                updateProgress(currentRow - settings.startRow, settings.endRow - settings.startRow);
                 
                 // Wait between each item
-                await sleep(DELAY_BETWEEN_ITEMS);
+                await sleep(settings.itemDelay);
             }
 
             return { successful, skipped, failed };
         }
 
         async function processAllData() {
+            const settings = getSettings();
             let totalSuccessful = 0;
             let totalSkipped = 0;
             let totalFailed = 0;
 
             try {
-                for (let i = currentRow; i < jsonData.length; i += ITEMS_PER_BATCH) {
+                currentRow = settings.startRow;
+                while (currentRow < settings.endRow && currentRow < jsonData.length) {
                     if (isPaused) {
                         updateStatus('Upload paused. Click "Resume" to continue.', 'warning');
                         return;
                     }
 
                     try {
-                        const { successful, skipped, failed } = await processBatch(i);
+                        const { successful, skipped, failed } = await processBatch(currentRow, settings);
                         totalSuccessful += successful;
                         totalSkipped += skipped;
                         totalFailed += failed;
 
-                        updateStatus(`Processing... Successful: ${totalSuccessful}, Skipped: ${totalSkipped}, Failed: ${totalFailed}`);
+                        updateStatus(
+                            `Processing rows ${currentRow + 1} to ${Math.min(currentRow + settings.batchSize, settings.endRow)}... ` +
+                            `Successful: ${totalSuccessful}, Skipped: ${totalSkipped}, Failed: ${totalFailed}`
+                        );
                         
-                        // Save progress to localStorage
+                        // Save progress
                         localStorage.setItem('uploadProgress', JSON.stringify({
-                            currentRow: currentRow,
+                            currentRow,
                             totalSuccessful,
                             totalSkipped,
-                            totalFailed
+                            totalFailed,
+                            settings
                         }));
 
                         // Wait between batches
-                        await sleep(DELAY_BETWEEN_BATCHES);
+                        await sleep(settings.batchDelay);
                     } catch (error) {
-                        if (error.message === 'PAUSED') {
-                            throw error;
-                        }
+                        if (error.message === 'PAUSED') throw error;
                         console.error('Batch error:', error);
-                        // Continue with next batch despite errors
+                        await sleep(settings.batchDelay * 2); // Double delay on error
                     }
                 }
 
-                updateStatus(`Upload complete! Successful: ${totalSuccessful}, Skipped: ${totalSkipped}, Failed: ${totalFailed}`, 'success');
+                updateStatus(
+                    `Upload complete! Successful: ${totalSuccessful}, Skipped: ${totalSkipped}, Failed: ${totalFailed}`, 
+                    'success'
+                );
                 localStorage.removeItem('uploadProgress');
             } catch (error) {
                 if (error.message !== 'PAUSED') {
@@ -208,24 +243,23 @@
             try {
                 const data = await file.arrayBuffer();
                 const workbook = XLSX.read(data, { type: 'array' });
-                globalWorkbook = workbook;
-                
                 const firstSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[firstSheetName];
                 jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
-                totalRows = jsonData.length;
+
+                // Update endRow input with total rows if not set
+                if (document.getElementById('endRow').value === '1000') {
+                    document.getElementById('endRow').value = jsonData.length;
+                }
 
                 // Check for saved progress
                 const savedProgress = localStorage.getItem('uploadProgress');
                 if (savedProgress) {
                     const progress = JSON.parse(savedProgress);
-                    currentRow = progress.currentRow;
-                    updateStatus(`Resuming from row ${currentRow + 1}...`);
-                } else {
-                    currentRow = 0;
+                    document.getElementById('startRow').value = progress.currentRow;
+                    updateStatus(`Resuming from row ${progress.currentRow + 1}...`);
                 }
 
-                updateProgress(currentRow, totalRows);
                 await processAllData();
             } catch (error) {
                 console.error('Error processing file:', error);
@@ -239,7 +273,7 @@
             pauseButton.textContent = isPaused ? 'Resume' : 'Pause';
             
             if (!isPaused) {
-                processAllData(); // Resume processing
+                processAllData();
             }
         }
 
@@ -248,7 +282,12 @@
             const savedProgress = localStorage.getItem('uploadProgress');
             if (savedProgress) {
                 const progress = JSON.parse(savedProgress);
-                updateStatus(`Previous upload was interrupted at row ${progress.currentRow + 1}. Select the same file and click Start to resume.`, 'warning');
+                document.getElementById('startRow').value = progress.currentRow;
+                updateStatus(
+                    `Previous upload was interrupted at row ${progress.currentRow + 1}. ` +
+                    `Select the same file and adjust settings to resume.`, 
+                    'warning'
+                );
             }
         };
     </script>
