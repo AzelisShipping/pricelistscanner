@@ -1,11 +1,9 @@
-// script.js
-
 // Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDX89iKbSulLbxz3qPxLlcuKCMF-qqptwA",
   authDomain: "pricelistscanner.firebaseapp.com",
   projectId: "pricelistscanner",
-  storageBucket: "pricelistscanner.appspot.com",
+  storageBucket: "pricelistscanner.firebasestorage.app",
   messagingSenderId: "925350073765",
   appId: "1:925350073765:web:4c6f0d1c0471df1df0c44c"
 };
@@ -18,10 +16,23 @@ const db = firebase.firestore();
 const fileInput = document.getElementById('fileInput');
 const statusEl = document.getElementById('status');
 const processBtn = document.getElementById('processBtn');
-
 const bulkUploadInput = document.getElementById('bulkUploadInput');
 const bulkUploadBtn = document.getElementById('bulkUploadBtn');
 const bulkStatusEl = document.getElementById('bulkStatus');
+
+async function processLargeFile(file, chunkSize = 1024 * 1024) {
+  const totalSize = file.size;
+  let processed = 0;
+  const chunks = [];
+  
+  while (processed < totalSize) {
+    const chunk = file.slice(processed, processed + chunkSize);
+    chunks.push(chunk);
+    processed += chunkSize;
+  }
+  
+  return chunks;
+}
 
 // Handle file selection for processing
 fileInput.addEventListener('change', (e) => {
@@ -57,7 +68,6 @@ processBtn.addEventListener('click', async () => {
   } catch (error) {
     console.error(error);
     statusEl.textContent = 'Error: ' + error.message;
-    alert('An error occurred: ' + error.message);
   }
 });
 
@@ -70,32 +80,42 @@ bulkUploadBtn.addEventListener('click', async () => {
   }
 
   const bulkFile = bulkFiles[0];
-  bulkStatusEl.textContent = 'Uploading business data...';
+  bulkStatusEl.textContent = 'Preparing file for upload...';
 
   try {
     // Validate the Excel file before uploading
     await validateBulkExcel(bulkFile);
-  } catch (validationError) {
-    bulkStatusEl.textContent = 'Error: ' + validationError;
-    return;
-  }
-
-  try {
+    
+    // Create FormData
     const formData = new FormData();
-    formData.append('file', bulkFile);
+    
+    // If file is large, process in chunks
+    if (bulkFile.size > 5 * 1024 * 1024) { // If larger than 5MB
+      const chunks = await processLargeFile(bulkFile);
+      formData.append('chunks', chunks.length);
+      chunks.forEach((chunk, index) => {
+        formData.append(`chunk${index}`, chunk);
+      });
+    } else {
+      formData.append('file', bulkFile);
+    }
+
+    bulkStatusEl.textContent = 'Uploading business data...';
 
     const response = await fetch('https://pricelistscanner.vercel.app/api/uploadbusinessdata', {
       method: 'POST',
-      credentials: 'include',
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
       },
+      mode: 'cors',
+      credentials: 'include',
       body: formData
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(errorText || 'Failed to upload business data.');
+      console.error('Server response:', errorText);
+      throw new Error(errorText || 'Failed to upload business data');
     }
 
     const result = await response.json();
@@ -112,8 +132,7 @@ async function loadReferenceData() {
   return snapshot.docs.map(doc => ({
     sku: doc.data().sku.trim().toUpperCase(),
     description: doc.data().description.trim(),
-    weight: doc.data().packWeight, // Ensure the field name matches your Firestore schema
-    // Include other fields if needed
+    weight: doc.data().packWeight,
   }));
 }
 
@@ -125,7 +144,6 @@ async function extractFileText(file) {
   } else if (fileName.endsWith('.pdf')) {
     return await extractPDFText(file);
   } else {
-    // Treat unknown files as text
     return await file.text();
   }
 }
@@ -138,7 +156,6 @@ async function extractExcelText(file) {
   const worksheet = workbook.Sheets[firstSheetName];
   const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-  // Assuming 'Code' is the second column (index 1)
   return jsonData.map(row => {
     if (row.length >= 2) {
       return row.map((cell, index) => index === 1 ? String(cell).trim().toUpperCase() : cell).join(' ');
@@ -182,7 +199,7 @@ async function callFunctionForOpenAI(text, referenceData) {
     return response.json();
   } catch (error) {
     console.error("Error in callFunctionForOpenAI:", error);
-    throw error; // Rethrow to be caught in the main try-catch
+    throw error;
   }
 }
 
@@ -240,7 +257,7 @@ function validateBulkExcel(file) {
       }
     };
 
-    reader.onerror = (error) => {
+    reader.onerror = () => {
       reject('Error reading the file');
     };
 
