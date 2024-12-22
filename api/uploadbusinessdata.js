@@ -122,7 +122,13 @@ export default async function handler(req, res) {
 
       res.status(200).json({ message: 'Business data uploaded successfully!' });
     } catch (error) {
-      console.error("Error processing the file:", error);
+      console.error('Detailed error:', {
+        error: error.message,
+        stack: error.stack,
+        requestBody: req.body,
+        filepath: file?.filepath,
+        filename: file?.originalFilename
+      });
       res.status(500).json({ error: 'Error processing the file', details: error.message });
     } finally {
       // Remove the uploaded file from the server
