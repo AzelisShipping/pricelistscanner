@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Secure Product Code Uploader</title>
+    <title>Product Code Uploader with Resume</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
@@ -12,23 +12,22 @@
         #progress { margin: 10px 0; }
         .error { color: red; }
         .success { color: green; }
+        .warning { color: orange; }
+        #resumeSection { margin-top: 20px; }
     </style>
 </head>
 <body>
-    <div id="loginSection">
-        <h2>Login</h2>
-        <input type="email" id="email" placeholder="Email">
-        <input type="password" id="password" placeholder="Password">
-        <button onclick="login()">Login</button>
-        <p id="loginStatus" class="error"></p>
-    </div>
-
-    <div id="uploadSection" class="hidden">
+    <div id="uploadSection">
         <h2>Upload Product Codes</h2>
         <input type="file" id="fileInput" accept=".xlsx, .xls">
         <button onclick="uploadFile()">Upload to Database</button>
         <p id="status"></p>
         <div id="progress"></div>
+        <div id="resumeSection" class="hidden">
+            <h3>Resume Upload</h3>
+            <p>Last processed row: <span id="lastRow">0</span></p>
+            <button onclick="resumeUpload()">Resume from Last Position</button>
+        </div>
     </div>
 
     <script>
@@ -44,45 +43,94 @@
 
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const auth = firebase.auth();
 
-        // Check authentication state
-        auth.onAuthStateChanged(function(user) {
-            if (user) {
-                document.getElementById('loginSection').classList.add('hidden');
-                document.getElementById('uploadSection').classList.remove('hidden');
-            } else {
-                document.getElementById('loginSection').classList.remove('hidden');
-                document.getElementById('uploadSection').classList.add('hidden');
-            }
-        });
+        let globalWorkbook = null;
+        let lastProcessedRow = 0;
+        const BATCH_SIZE = 25; // Smaller batch size
+        const DELAY_BETWEEN_BATCHES = 1000; // 1 second delay between batches
 
-        // Login function
-        async function login() {
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            const statusEl = document.getElementById('loginStatus');
-
-            try {
-                await auth.signInWithEmailAndPassword(email, password);
-                statusEl.textContent = 'Login successful!';
-                statusEl.className = 'success';
-            } catch (error) {
-                console.error('Login error:', error);
-                statusEl.textContent = `Error: ${error.message}`;
-                statusEl.className = 'error';
-            }
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         }
-        
-        async function uploadFile() {
-            if (!auth.currentUser) {
-                alert('Please login first');
-                return;
+
+        async function processRowBatch(jsonData, startRow, endRow) {
+            const batch = db.batch();
+            let successful = 0;
+            let skipped = 0;
+
+            for (let i = startRow; i < Math.min(endRow, jsonData.length); i++) {
+                const row = jsonData[i];
+                if (!row['Product Number']) {
+                    skipped++;
+                    continue;
+                }
+
+                const docRef = db.collection('products').doc(row['Product Number'].toString().trim());
+                batch.set(docRef, {
+                    accountSelection: (row['Account Selection'] || '').toString().trim(),
+                    sku: row['Product Number'].toString().trim(),
+                    description: (row['Product Description'] || '').toString().trim(),
+                    searchDescription: (row['Search Description'] || '').toString().trim(),
+                    packWeight: typeof row['Pack Weight'] === 'number' ? 
+                        row['Pack Weight'] : 
+                        parseFloat(row['Pack Weight']) || 0,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+
+                successful++;
             }
 
-            const fileInput = document.getElementById('fileInput');
+            await batch.commit();
+            return { successful, skipped };
+        }
+
+        async function processExcelData(jsonData, startFromRow = 0) {
             const statusEl = document.getElementById('status');
             const progressEl = document.getElementById('progress');
+            const resumeSection = document.getElementById('resumeSection');
+            const lastRowEl = document.getElementById('lastRow');
+
+            let totalSuccessful = 0;
+            let totalSkipped = 0;
+
+            try {
+                for (let i = startFromRow; i < jsonData.length; i += BATCH_SIZE) {
+                    statusEl.textContent = `Processing rows ${i + 1} to ${Math.min(i + BATCH_SIZE, jsonData.length)} of ${jsonData.length}...`;
+                    progressEl.textContent = `Progress: ${Math.floor((i / jsonData.length) * 100)}%`;
+
+                    try {
+                        const { successful, skipped } = await processRowBatch(jsonData, i, i + BATCH_SIZE);
+                        totalSuccessful += successful;
+                        totalSkipped += skipped;
+                        lastProcessedRow = i + BATCH_SIZE;
+                        lastRowEl.textContent = lastProcessedRow;
+                        
+                        // Save progress to localStorage
+                        localStorage.setItem('lastProcessedRow', lastProcessedRow);
+                        
+                        // Add delay between batches
+                        await sleep(DELAY_BETWEEN_BATCHES);
+                    } catch (error) {
+                        console.error('Batch error:', error);
+                        statusEl.textContent = `Error at row ${i + 1}. You can resume from this point.`;
+                        statusEl.className = 'error';
+                        resumeSection.classList.remove('hidden');
+                        throw error;
+                    }
+                }
+
+                statusEl.textContent = `Upload complete! Successfully uploaded ${totalSuccessful} records. ${totalSkipped} records skipped.`;
+                statusEl.className = 'success';
+                localStorage.removeItem('lastProcessedRow'); // Clear progress on successful completion
+            } catch (error) {
+                console.error('Processing error:', error);
+                resumeSection.classList.remove('hidden');
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const statusEl = document.getElementById('status');
             
             if (!fileInput.files.length) {
                 alert('Please select a file first.');
@@ -98,48 +146,13 @@
                     try {
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
+                        globalWorkbook = workbook;
+                        
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
                         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
 
-                        statusEl.textContent = `Processing ${jsonData.length} records...`;
-                        let successful = 0;
-                        let failed = 0;
-
-                        // Process in smaller batches
-                        const batchSize = 100;
-                        for (let i = 0; i < jsonData.length; i += batchSize) {
-                            const batch = db.batch();
-                            const currentBatch = jsonData.slice(i, i + batchSize);
-
-                            currentBatch.forEach(row => {
-                                if (!row['Product Number']) {
-                                    failed++;
-                                    return;
-                                }
-
-                                const docRef = db.collection('products').doc(row['Product Number'].toString().trim());
-                                batch.set(docRef, {
-                                    accountSelection: (row['Account Selection'] || '').toString().trim(),
-                                    sku: row['Product Number'].toString().trim(),
-                                    description: (row['Product Description'] || '').toString().trim(),
-                                    searchDescription: (row['Search Description'] || '').toString().trim(),
-                                    packWeight: typeof row['Pack Weight'] === 'number' ? 
-                                        row['Pack Weight'] : 
-                                        parseFloat(row['Pack Weight']) || 0,
-                                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                    updatedBy: auth.currentUser.email
-                                }, { merge: true });
-
-                                successful++;
-                            });
-
-                            await batch.commit();
-                            progressEl.textContent = `Progress: ${Math.min((i + batchSize), jsonData.length)}/${jsonData.length}`;
-                        }
-
-                        statusEl.textContent = `Upload complete! Successfully uploaded ${successful} records. ${failed} records skipped.`;
-                        statusEl.className = 'success';
+                        await processExcelData(jsonData);
                     } catch (error) {
                         console.error('Error processing file:', error);
                         statusEl.textContent = 'Error: ' + error.message;
@@ -148,13 +161,35 @@
                 };
 
                 reader.readAsArrayBuffer(file);
-
             } catch (error) {
                 console.error('Error reading file:', error);
                 statusEl.textContent = 'Error: ' + error.message;
                 statusEl.className = 'error';
             }
         }
+
+        async function resumeUpload() {
+            if (!globalWorkbook) {
+                alert('Please upload the file again to resume.');
+                return;
+            }
+
+            const firstSheetName = globalWorkbook.SheetNames[0];
+            const worksheet = globalWorkbook.Sheets[firstSheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+            
+            const savedRow = parseInt(localStorage.getItem('lastProcessedRow')) || lastProcessedRow;
+            await processExcelData(jsonData, savedRow);
+        }
+
+        // Check for saved progress on page load
+        window.onload = function() {
+            const savedRow = localStorage.getItem('lastProcessedRow');
+            if (savedRow) {
+                document.getElementById('lastRow').textContent = savedRow;
+                document.getElementById('resumeSection').classList.remove('hidden');
+            }
+        };
     </script>
 </body>
 </html>
