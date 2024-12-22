@@ -16,7 +16,7 @@ if (!admin.apps.length) {
       auth_uri: "https://accounts.google.com/o/oauth2/auth",
       token_uri: "https://oauth2.googleapis.com/token",
       auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/
+      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-597tu%40pricelistscanner.iam.gserviceaccount.com"
     }),
     databaseURL: "https://pricelistscanner.firebaseio.com"
   });
@@ -51,123 +51,125 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Parse the incoming form with formidable
+  // Create a new formidable form instance
   const form = new formidable.IncomingForm({
     maxFileSize: 10 * 1024 * 1024, // 10MB limit
   });
 
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      console.error("Form parsing error:", err);
-      return res.status(500).json({ error: 'Error parsing the file' });
-    }
+  // Use Promise to handle form parsing
+  const parseForm = () => new Promise((resolve, reject) => {
+    form.parse(req, (err, fields, files) => {
+      if (err) reject(err);
+      else resolve({ fields, files });
+    });
+  });
 
+  try {
+    const { fields, files } = await parseForm();
     const file = files.file;
 
     if (!file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    try {
-      console.log('Reading file:', file.filepath);
-      // Read the uploaded Excel file
-      const workbook = XLSX.readFile(file.filepath, {
-        type: 'buffer',
-        cellDates: true,
-        cellNF: false,
-        cellText: false
-      });
-      
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
-        defval: '',
-        raw: false,
-        dateNF: 'yyyy-mm-dd'
-      });
+    console.log('Reading file:', file.filepath);
+    // Read the uploaded Excel file
+    const workbook = XLSX.readFile(file.filepath, {
+      type: 'buffer',
+      cellDates: true,
+      cellNF: false,
+      cellText: false
+    });
+    
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+      defval: '',
+      raw: false,
+      dateNF: 'yyyy-mm-dd'
+    });
 
-      console.log('Parsed Excel data:', jsonData[0]); // Log first row for debugging
+    console.log('Parsed Excel data:', jsonData[0]); // Log first row for debugging
 
-      // Validate and transform the data
-      const requiredHeaders = [
-        'Account Selection',
-        'Product Number',
-        'Product Description',
-        'Search Description',
-        'Pack Weight'
-      ];
+    // Validate and transform the data
+    const requiredHeaders = [
+      'Account Selection',
+      'Product Number',
+      'Product Description',
+      'Search Description',
+      'Pack Weight'
+    ];
 
-      if (jsonData.length === 0) {
-        throw new Error('Excel file is empty');
+    if (jsonData.length === 0) {
+      throw new Error('Excel file is empty');
+    }
+
+    const headers = Object.keys(jsonData[0]);
+    const missingHeaders = requiredHeaders.filter(header => !headers.includes(header));
+
+    if (missingHeaders.length > 0) {
+      return res.status(400).json({ error: `Missing headers: ${missingHeaders.join(', ')}` });
+    }
+
+    // Prepare batch write to Firestore
+    const batch = db.batch();
+    let processedCount = 0;
+    let skippedCount = 0;
+
+    for (const row of jsonData) {
+      if (!row['Product Number']) {
+        console.warn(`Skipping row: Missing Product Number`);
+        skippedCount++;
+        continue;
       }
 
-      const headers = Object.keys(jsonData[0]);
-      const missingHeaders = requiredHeaders.filter(header => !headers.includes(header));
+      const docRef = db.collection('products').doc(row['Product Number'].toString().trim());
 
-      if (missingHeaders.length > 0) {
-        return res.status(400).json({ error: `Missing headers: ${missingHeaders.join(', ')}` });
-      }
+      batch.set(docRef, {
+        accountSelection: row['Account Selection'] ? row['Account Selection'].toString().trim() : '',
+        sku: row['Product Number'].toString().trim(),
+        description: row['Product Description'] ? row['Product Description'].toString().trim() : '',
+        searchDescription: row['Search Description'] ? row['Search Description'].toString().trim() : '',
+        packWeight: typeof row['Pack Weight'] === 'number' ? row['Pack Weight'] : parseFloat(row['Pack Weight']) || 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
 
-      // Prepare batch write to Firestore
-      const batch = db.batch();
-      let processedCount = 0;
-      let skippedCount = 0;
+      processedCount++;
+    }
 
-      jsonData.forEach((row, index) => {
-        const {
-          'Account Selection': accountSelection,
-          'Product Number': productNumber,
-          'Product Description': productDescription,
-          'Search Description': searchDescription,
-          'Pack Weight': packWeight
-        } = row;
+    console.log(`Attempting to commit batch with ${processedCount} items`);
+    await batch.commit();
+    
+    // Clean up: delete the temporary file
+    if (file.filepath) {
+      await unlink(file.filepath);
+    }
 
-        if (!productNumber) {
-          console.warn(`Row ${index + 2}: Missing Product Number, skipping.`);
-          skippedCount++;
-          return;
-        }
+    res.status(200).json({ 
+      message: 'Business data uploaded successfully!',
+      processed: processedCount,
+      skipped: skippedCount
+    });
 
-        const docRef = db.collection('products').doc(productNumber.toString().trim());
+  } catch (error) {
+    console.error('Detailed error:', {
+      error: error.message,
+      stack: error.stack
+    });
 
-        batch.set(docRef, {
-          accountSelection: accountSelection ? accountSelection.toString().trim() : '',
-          sku: productNumber.toString().trim(),
-          description: productDescription ? productDescription.toString().trim() : '',
-          searchDescription: searchDescription ? searchDescription.toString().trim() : '',
-          packWeight: typeof packWeight === 'number' ? packWeight : parseFloat(packWeight) || 0,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-
-        processedCount++;
-      });
-
-      console.log(`Attempting to commit batch with ${processedCount} items`);
-      await batch.commit();
-      
-      res.status(200).json({ 
-        message: 'Business data uploaded successfully!',
-        processed: processedCount,
-        skipped: skippedCount
-      });
-
-    } catch (error) {
-      console.error('Detailed error:', {
-        error: error.message,
-        stack: error.stack,
-        requestBody: req.body,
-        filepath: file?.filepath,
-        filename: file?.originalFilename
-      });
-      res.status(500).json({ error: 'Error processing the file', details: error.message });
-    } finally {
-      // Remove the uploaded file from the server
-      if (file?.filepath) {
-        fs.unlink(file.filepath, (err) => {
-          if (err) console.error("Error deleting uploaded file:", err);
-        });
+    // Clean up temporary file in case of error
+    if (file?.filepath) {
+      try {
+        await unlink(file.filepath);
+      } catch (unlinkError) {
+        console.error("Error deleting uploaded file:", unlinkError);
       }
     }
-  });
+
+    res.status(500).json({ 
+      error: 'Error processing the file', 
+      details: error.message 
+    });
+  }
 }
