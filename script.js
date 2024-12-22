@@ -84,21 +84,25 @@ bulkUploadBtn.addEventListener('click', async () => {
     const formData = new FormData();
     formData.append('file', bulkFile);
 
-    const response = await fetch('https://pricelistscanner.vercel.app/api/uploadBusinessData', {
+    const response = await fetch('https://pricelistscanner.vercel.app/api/uploadbusinessdata', {
       method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json'
+      },
       body: formData
     });
 
-    const result = await response.json();
-
     if (!response.ok) {
-      throw new Error(result.error || 'Failed to upload business data.');
+      const errorText = await response.text();
+      throw new Error(errorText || 'Failed to upload business data.');
     }
 
+    const result = await response.json();
     bulkStatusEl.textContent = 'Business data uploaded successfully!';
   } catch (error) {
-    console.error(error);
-    bulkStatusEl.textContent = 'Error: ' + error.message;
+    console.error('Upload error:', error);
+    bulkStatusEl.textContent = 'Error: ' + (error.message || 'Failed to upload file');
   }
 });
 
