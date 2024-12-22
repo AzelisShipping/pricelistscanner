@@ -1,7 +1,5 @@
-const admin = require('firebase-admin');
-const fetch = require('node-fetch');
-
-
+import admin from 'firebase-admin';
+import fetch from 'node-fetch';
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
