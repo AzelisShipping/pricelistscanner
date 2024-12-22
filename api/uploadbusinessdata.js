@@ -1,7 +1,7 @@
-const admin = require('firebase-admin');
-const XLSX = require('xlsx');
-const formidable = require('formidable');
-const fs = require('fs');
+import admin from 'firebase-admin';
+import XLSX from 'xlsx';
+import formidable from 'formidable';
+import { unlink } from 'fs/promises';
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
@@ -16,7 +16,7 @@ if (!admin.apps.length) {
       auth_uri: "https://accounts.google.com/o/oauth2/auth",
       token_uri: "https://oauth2.googleapis.com/token",
       auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-597tu%40pricelistscanner.iam.gserviceaccount.com"
+      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/
     }),
     databaseURL: "https://pricelistscanner.firebaseio.com"
   });
