@@ -1,4 +1,5 @@
 // Firebase configuration
+
 const firebaseConfig = {
   apiKey: "AIzaSyDX89iKbSulLbxz3qPxLlcuKCMF-qqptwA",
   authDomain: "pricelistscanner.firebaseapp.com",
