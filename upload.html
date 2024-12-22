@@ -2,32 +2,58 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Product Code Uploader with Resume</title>
+    <title>Super Slow Product Code Uploader</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        .hidden { display: none; }
-        #progress { margin: 10px 0; }
-        .error { color: red; }
-        .success { color: green; }
-        .warning { color: orange; }
-        #resumeSection { margin-top: 20px; }
+        .container { max-width: 800px; margin: 20px auto; padding: 20px; font-family: Arial, sans-serif; }
+        .status { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .error { background: #ffe6e6; color: #cc0000; }
+        .success { background: #e6ffe6; color: #006600; }
+        .warning { background: #fff3e6; color: #cc6600; }
+        .progress-bar { 
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s ease;
+        }
+        button { 
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #cccccc;
+        }
+        .controls { margin: 20px 0; }
     </style>
 </head>
 <body>
-    <div id="uploadSection">
-        <h2>Upload Product Codes</h2>
-        <input type="file" id="fileInput" accept=".xlsx, .xls">
-        <button onclick="uploadFile()">Upload to Database</button>
-        <p id="status"></p>
-        <div id="progress"></div>
-        <div id="resumeSection" class="hidden">
-            <h3>Resume Upload</h3>
-            <p>Last processed row: <span id="lastRow">0</span></p>
-            <button onclick="resumeUpload()">Resume from Last Position</button>
+    <div class="container">
+        <h1>Product Code Uploader</h1>
+        <div class="controls">
+            <input type="file" id="fileInput" accept=".xlsx, .xls">
+            <button onclick="startUpload()">Start Upload</button>
+            <button id="pauseButton" onclick="togglePause()" disabled>Pause</button>
         </div>
+        
+        <div id="progressBar" class="progress-bar">
+            <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+        </div>
+        
+        <p id="status" class="status"></p>
+        <p id="details"></p>
     </div>
 
     <script>
@@ -44,29 +70,36 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
 
+        let isPaused = false;
         let globalWorkbook = null;
-        let lastProcessedRow = 0;
-        const BATCH_SIZE = 25; // Smaller batch size
-        const DELAY_BETWEEN_BATCHES = 1000; // 1 second delay between batches
+        let currentRow = 0;
+        let totalRows = 0;
+        let jsonData = null;
+        const ITEMS_PER_BATCH = 10;  // Reduced batch size
+        const DELAY_BETWEEN_BATCHES = 3000;  // 3 seconds delay
+        const DELAY_BETWEEN_ITEMS = 300;     // 300ms delay between individual items
 
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
+        function updateProgress(current, total) {
+            const percentage = (current / total) * 100;
+            document.getElementById('progressFill').style.width = percentage + '%';
+            document.getElementById('details').textContent = 
+                `Progress: ${current}/${total} rows (${percentage.toFixed(1)}%)`;
         }
 
-        async function processRowBatch(jsonData, startRow, endRow) {
-            const batch = db.batch();
-            let successful = 0;
-            let skipped = 0;
+        function updateStatus(message, type = 'normal') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+        }
 
-            for (let i = startRow; i < Math.min(endRow, jsonData.length); i++) {
-                const row = jsonData[i];
-                if (!row['Product Number']) {
-                    skipped++;
-                    continue;
-                }
+        async function processItem(row) {
+            if (!row['Product Number']) {
+                return { skipped: true };
+            }
 
+            try {
                 const docRef = db.collection('products').doc(row['Product Number'].toString().trim());
-                batch.set(docRef, {
+                await docRef.set({
                     accountSelection: (row['Account Selection'] || '').toString().trim(),
                     sku: row['Product Number'].toString().trim(),
                     description: (row['Product Description'] || '').toString().trim(),
@@ -76,61 +109,93 @@
                         parseFloat(row['Pack Weight']) || 0,
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 }, { merge: true });
-
-                successful++;
+                return { success: true };
+            } catch (error) {
+                console.error('Error processing item:', error);
+                return { error: error.message };
             }
-
-            await batch.commit();
-            return { successful, skipped };
         }
 
-        async function processExcelData(jsonData, startFromRow = 0) {
-            const statusEl = document.getElementById('status');
-            const progressEl = document.getElementById('progress');
-            const resumeSection = document.getElementById('resumeSection');
-            const lastRowEl = document.getElementById('lastRow');
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
 
+        async function processBatch(startIndex) {
+            let successful = 0;
+            let skipped = 0;
+            let failed = 0;
+
+            for (let i = startIndex; i < Math.min(startIndex + ITEMS_PER_BATCH, jsonData.length); i++) {
+                if (isPaused) {
+                    throw new Error('PAUSED');
+                }
+
+                const result = await processItem(jsonData[i]);
+                if (result.success) successful++;
+                else if (result.skipped) skipped++;
+                else failed++;
+
+                currentRow = i + 1;
+                updateProgress(currentRow, totalRows);
+                
+                // Wait between each item
+                await sleep(DELAY_BETWEEN_ITEMS);
+            }
+
+            return { successful, skipped, failed };
+        }
+
+        async function processAllData() {
             let totalSuccessful = 0;
             let totalSkipped = 0;
+            let totalFailed = 0;
 
             try {
-                for (let i = startFromRow; i < jsonData.length; i += BATCH_SIZE) {
-                    statusEl.textContent = `Processing rows ${i + 1} to ${Math.min(i + BATCH_SIZE, jsonData.length)} of ${jsonData.length}...`;
-                    progressEl.textContent = `Progress: ${Math.floor((i / jsonData.length) * 100)}%`;
+                for (let i = currentRow; i < jsonData.length; i += ITEMS_PER_BATCH) {
+                    if (isPaused) {
+                        updateStatus('Upload paused. Click "Resume" to continue.', 'warning');
+                        return;
+                    }
 
                     try {
-                        const { successful, skipped } = await processRowBatch(jsonData, i, i + BATCH_SIZE);
+                        const { successful, skipped, failed } = await processBatch(i);
                         totalSuccessful += successful;
                         totalSkipped += skipped;
-                        lastProcessedRow = i + BATCH_SIZE;
-                        lastRowEl.textContent = lastProcessedRow;
+                        totalFailed += failed;
+
+                        updateStatus(`Processing... Successful: ${totalSuccessful}, Skipped: ${totalSkipped}, Failed: ${totalFailed}`);
                         
                         // Save progress to localStorage
-                        localStorage.setItem('lastProcessedRow', lastProcessedRow);
-                        
-                        // Add delay between batches
+                        localStorage.setItem('uploadProgress', JSON.stringify({
+                            currentRow: currentRow,
+                            totalSuccessful,
+                            totalSkipped,
+                            totalFailed
+                        }));
+
+                        // Wait between batches
                         await sleep(DELAY_BETWEEN_BATCHES);
                     } catch (error) {
+                        if (error.message === 'PAUSED') {
+                            throw error;
+                        }
                         console.error('Batch error:', error);
-                        statusEl.textContent = `Error at row ${i + 1}. You can resume from this point.`;
-                        statusEl.className = 'error';
-                        resumeSection.classList.remove('hidden');
-                        throw error;
+                        // Continue with next batch despite errors
                     }
                 }
 
-                statusEl.textContent = `Upload complete! Successfully uploaded ${totalSuccessful} records. ${totalSkipped} records skipped.`;
-                statusEl.className = 'success';
-                localStorage.removeItem('lastProcessedRow'); // Clear progress on successful completion
+                updateStatus(`Upload complete! Successful: ${totalSuccessful}, Skipped: ${totalSkipped}, Failed: ${totalFailed}`, 'success');
+                localStorage.removeItem('uploadProgress');
             } catch (error) {
-                console.error('Processing error:', error);
-                resumeSection.classList.remove('hidden');
+                if (error.message !== 'PAUSED') {
+                    updateStatus('Error: ' + error.message, 'error');
+                }
             }
         }
 
-        async function uploadFile() {
+        async function startUpload() {
             const fileInput = document.getElementById('fileInput');
-            const statusEl = document.getElementById('status');
+            document.getElementById('pauseButton').disabled = false;
             
             if (!fileInput.files.length) {
                 alert('Please select a file first.');
@@ -138,56 +203,52 @@
             }
 
             const file = fileInput.files[0];
-            statusEl.textContent = 'Reading file...';
+            updateStatus('Reading file...');
 
             try {
-                const reader = new FileReader();
-                reader.onload = async function(e) {
-                    try {
-                        const data = new Uint8Array(e.target.result);
-                        const workbook = XLSX.read(data, { type: 'array' });
-                        globalWorkbook = workbook;
-                        
-                        const firstSheetName = workbook.SheetNames[0];
-                        const worksheet = workbook.Sheets[firstSheetName];
-                        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+                const data = await file.arrayBuffer();
+                const workbook = XLSX.read(data, { type: 'array' });
+                globalWorkbook = workbook;
+                
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+                totalRows = jsonData.length;
 
-                        await processExcelData(jsonData);
-                    } catch (error) {
-                        console.error('Error processing file:', error);
-                        statusEl.textContent = 'Error: ' + error.message;
-                        statusEl.className = 'error';
-                    }
-                };
+                // Check for saved progress
+                const savedProgress = localStorage.getItem('uploadProgress');
+                if (savedProgress) {
+                    const progress = JSON.parse(savedProgress);
+                    currentRow = progress.currentRow;
+                    updateStatus(`Resuming from row ${currentRow + 1}...`);
+                } else {
+                    currentRow = 0;
+                }
 
-                reader.readAsArrayBuffer(file);
+                updateProgress(currentRow, totalRows);
+                await processAllData();
             } catch (error) {
-                console.error('Error reading file:', error);
-                statusEl.textContent = 'Error: ' + error.message;
-                statusEl.className = 'error';
+                console.error('Error processing file:', error);
+                updateStatus('Error: ' + error.message, 'error');
             }
         }
 
-        async function resumeUpload() {
-            if (!globalWorkbook) {
-                alert('Please upload the file again to resume.');
-                return;
-            }
-
-            const firstSheetName = globalWorkbook.SheetNames[0];
-            const worksheet = globalWorkbook.Sheets[firstSheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+        function togglePause() {
+            isPaused = !isPaused;
+            const pauseButton = document.getElementById('pauseButton');
+            pauseButton.textContent = isPaused ? 'Resume' : 'Pause';
             
-            const savedRow = parseInt(localStorage.getItem('lastProcessedRow')) || lastProcessedRow;
-            await processExcelData(jsonData, savedRow);
+            if (!isPaused) {
+                processAllData(); // Resume processing
+            }
         }
 
         // Check for saved progress on page load
         window.onload = function() {
-            const savedRow = localStorage.getItem('lastProcessedRow');
-            if (savedRow) {
-                document.getElementById('lastRow').textContent = savedRow;
-                document.getElementById('resumeSection').classList.remove('hidden');
+            const savedProgress = localStorage.getItem('uploadProgress');
+            if (savedProgress) {
+                const progress = JSON.parse(savedProgress);
+                updateStatus(`Previous upload was interrupted at row ${progress.currentRow + 1}. Select the same file and click Start to resume.`, 'warning');
             }
         };
     </script>
